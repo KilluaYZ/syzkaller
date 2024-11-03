@@ -38,6 +38,7 @@ type Reporter struct {
 	interests    []*regexp.Regexp
 }
 
+// 一个种子真正的信息主要存放在Report中
 type Report struct {
 	// Title contains a representative description of the first oops.
 	Title string

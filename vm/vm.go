@@ -42,9 +42,10 @@ import (
 	_ "github.com/google/syzkaller/vm/vmware"
 )
 
+// vm 池，syz-manager使用vm pool来管理guest vm
 type Pool struct {
 	impl               vmimpl.Pool
-	typ                vmimpl.Type
+	typ                vmimpl.Type // 每个vm pool只能有一个type的vm
 	workdir            string
 	template           string
 	timeouts           targets.Timeouts

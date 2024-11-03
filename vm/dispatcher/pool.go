@@ -69,7 +69,8 @@ func (p *Pool[T]) SetDefault(def Runner[T]) {
 		inst.free(def)
 	}
 }
-
+// 表示Pool类型的成员函数
+// 并发地运行pool中的实例
 func (p *Pool[T]) Loop(ctx context.Context) {
 	var wg sync.WaitGroup
 	wg.Add(len(p.instances))
@@ -84,7 +85,7 @@ func (p *Pool[T]) Loop(ctx context.Context) {
 	}
 	wg.Wait()
 }
-
+// 运行实例
 func (p *Pool[T]) runInstance(ctx context.Context, inst *poolInstance[T]) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -93,6 +94,7 @@ func (p *Pool[T]) runInstance(ctx context.Context, inst *poolInstance[T]) {
 	inst.reset(cancel)
 
 	start := time.Now()
+	// 开始启动实例
 	inst.status(StateBooting)
 	defer inst.status(StateOffline)
 
@@ -121,7 +123,7 @@ func (p *Pool[T]) runInstance(ctx context.Context, inst *poolInstance[T]) {
 			return
 		}
 	}
-
+	// 运行实例
 	inst.status(StateRunning)
 	job(ctx, obj, inst.updateInfo)
 }

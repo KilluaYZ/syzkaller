@@ -69,19 +69,26 @@ var (
 	flagTests = flag.String("tests", "", "prefix to match test file names (for -mode run-tests)")
 )
 
+// 表示一个syz-manager的基本信息
 type Manager struct {
-	cfg             *mgrconfig.Config
-	mode            Mode
-	vmPool          *vm.Pool
-	pool            *dispatcher.Pool[*vm.Instance]
-	target          *prog.Target
-	sysTarget       *targets.Target
-	reporter        *report.Reporter
-	crashStore      *manager.CrashStore
-	serv            rpcserver.Server
-	http            *manager.HTTPServer
-	servStats       rpcserver.Stats
-	corpus          *corpus.Corpus
+	// 基本设置信息，对应存放在一个 json 文件中
+	cfg  *mgrconfig.Config
+	mode Mode
+	// 所用的 VM Pool
+	vmPool    *vm.Pool
+	pool      *dispatcher.Pool[*vm.Instance]
+	target    *prog.Target
+	sysTarget *targets.Target
+	// 用以报告 crash
+	reporter   *report.Reporter
+	crashStore *manager.CrashStore
+	// RPC Server，用以与 Guest 间通信
+	serv      rpcserver.Server
+	http      *manager.HTTPServer
+	servStats rpcserver.Stats
+	// 语料库
+	corpus *corpus.Corpus
+	// 存放语料的数据库
 	corpusDB        *db.DB
 	corpusDBMu      sync.Mutex // for concurrent operations on corpusDB
 	corpusPreload   chan []fuzzer.Candidate
@@ -98,7 +105,8 @@ type Manager struct {
 	// cfg.DashboardOnlyRepro is set, so that we don't accidentially use dash for anything.
 	dashRepro *dashapi.Dashboard
 
-	mu             sync.Mutex
+	mu sync.Mutex
+	// 动态模糊测试器
 	fuzzer         atomic.Pointer[fuzzer.Fuzzer]
 	snapshotSource *queue.Distributor
 	phase          int
@@ -134,6 +142,7 @@ const (
 	ModeRunTests
 )
 
+// syz-manager将fuzzing流程分为以下几个阶段
 const (
 	// Just started, nothing done yet.
 	phaseInit = iota
@@ -149,7 +158,9 @@ const (
 	phaseTriagedHub
 )
 
+// syz-manager的main函数
 func main() {
+	// 载入配置
 	if !prog.GitRevisionKnown() {
 		log.Fatalf("bad syz-manager build: build with make, run bin/syz-manager")
 	}
@@ -187,13 +198,17 @@ func main() {
 		flag.PrintDefaults()
 		log.Fatalf("unknown mode: %v", *flagMode)
 	}
+	// 调用RunManager
 	RunManager(mode, cfg)
 }
 
+// 进行初始化工作
 func RunManager(mode Mode, cfg *mgrconfig.Config) {
 	var vmPool *vm.Pool
+	// 这是一种特殊情况，manager不会启动任何VM，但是相应的，我么需要手动启动VM，并且再次启动manager
 	if !cfg.VMLess {
 		var err error
+		// vm.Create会创建一个VM pool
 		vmPool, err = vm.Create(cfg, *flagDebug)
 		if err != nil {
 			log.Fatalf("%v", err)
@@ -201,13 +216,16 @@ func RunManager(mode Mode, cfg *mgrconfig.Config) {
 		defer vmPool.Close()
 	}
 
+	// 初始化工作目录
 	osutil.MkdirAll(cfg.Workdir)
 
+	// 新建报告crash的东西
 	reporter, err := report.NewReporter(cfg)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
 
+	// 实例化manager
 	mgr := &Manager{
 		cfg:                cfg,
 		mode:               mode,
@@ -230,12 +248,13 @@ func RunManager(mode Mode, cfg *mgrconfig.Config) {
 	if *flagDebug {
 		mgr.cfg.Procs = 1
 	}
+	// 初始化网络服务器，用于展示前端网页
 	mgr.http = &manager.HTTPServer{
 		Cfg:        cfg,
 		StartTime:  time.Now(),
 		CrashStore: mgr.crashStore,
 	}
-
+	// 注册一个监视器（prometheus监视器，开源的）
 	mgr.initStats()
 	if mode == ModeFuzzing || mode == ModeCorpusTriage || mode == ModeCorpusRun {
 		go mgr.preloadCorpus()
@@ -245,6 +264,7 @@ func RunManager(mode Mode, cfg *mgrconfig.Config) {
 	go mgr.http.Serve()
 	go mgr.trackUsedFiles()
 
+	// 创建RPC服务
 	// Create RPC server for fuzzers.
 	mgr.servStats = rpcserver.NewStats()
 	mgr.serv, err = rpcserver.New(mgr.cfg, mgr, mgr.servStats, *flagDebug)
@@ -255,7 +275,7 @@ func RunManager(mode Mode, cfg *mgrconfig.Config) {
 		log.Fatalf("failed to start rpc server: %v", err)
 	}
 	log.Logf(0, "serving rpc on tcp://%v", mgr.serv.Port())
-
+	// 初始化面板
 	if cfg.DashboardAddr != "" {
 		opts := []dashapi.DashboardOpts{}
 		if cfg.DashboardUserAgent != "" {
@@ -277,7 +297,7 @@ func RunManager(mode Mode, cfg *mgrconfig.Config) {
 			log.Fatalf("failed to init asset storage: %v", err)
 		}
 	}
-
+	// 创建bench协程，每隔一分钟最小化语料库并将bench data写入bench文件
 	if *flagBench != "" {
 		mgr.initBench()
 	}
@@ -299,7 +319,9 @@ func RunManager(mode Mode, cfg *mgrconfig.Config) {
 	mgr.http.ReproLoop.Store(mgr.reproLoop)
 
 	ctx := vm.ShutdownCtx()
+	// 开启一个协程处理fuzzing结果
 	go mgr.processFuzzingResults(ctx)
+	// 启动fuzzing
 	mgr.pool.Loop(ctx)
 }
 
@@ -347,11 +369,14 @@ func (mgr *Manager) writeBench() {
 		return
 	}
 	mgr.benchMu.Lock()
+	// 在函数writeBench执行结束的最后调用mgr.benchMu.Unlock()释放锁
 	defer mgr.benchMu.Unlock()
+	// 将stat中collect到的所有信息都写到文件中
 	vals := make(map[string]int)
 	for _, stat := range stat.Collect(stat.All) {
 		vals[stat.Name] = stat.V
 	}
+	// 转化为json格式
 	data, err := json.MarshalIndent(vals, "", "  ")
 	if err != nil {
 		log.Fatalf("failed to serialize bench data")

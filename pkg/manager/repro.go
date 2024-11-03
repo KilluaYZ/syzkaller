@@ -24,11 +24,13 @@ type ReproResult struct {
 	Err    error
 }
 
+// 定义了crash的相关信息
 type Crash struct {
 	InstanceIndex int
 	FromHub       bool // this crash was created based on a repro from syz-hub
 	FromDashboard bool // .. or from dashboard
 	Manual        bool
+	// 更多的信息放在Report中
 	*report.Report
 }
 

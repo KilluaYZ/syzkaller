@@ -18,6 +18,7 @@ import (
 
 // Corpus object represents a set of syzkaller-found programs that
 // cover the kernel up to the currently reached frontiers.
+// 语料库，还没有理解是用来做什么的
 type Corpus struct {
 	ctx      context.Context
 	mu       sync.RWMutex

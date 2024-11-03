@@ -27,6 +27,7 @@ import (
 
 func init() {
 	var _ vmimpl.Infoer = (*instance)(nil)
+	// 调用Register信息将qemu的构造函数等注册到Types表中
 	vmimpl.Register("qemu", vmimpl.Type{
 		Ctor:       ctor,
 		Overcommit: true,
@@ -262,6 +263,7 @@ var archConfigs = map[string]*archConfig{
 	},
 }
 
+// 注册到Types时调用的构造函数
 func ctor(env *vmimpl.Env) (vmimpl.Pool, error) {
 	archConfig := archConfigs[env.OS+"/"+env.Arch]
 	cfg := &Config{
@@ -274,6 +276,7 @@ func ctor(env *vmimpl.Env) (vmimpl.Pool, error) {
 		NetDev:      archConfig.NetDev,
 		Snapshot:    true,
 	}
+	// 主要还调用LoadData解析配置文件之后进行检查
 	if err := config.LoadData(env.Config, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse qemu vm config: %w", err)
 	}
@@ -329,9 +332,11 @@ func (pool *Pool) Count() int {
 }
 
 func (pool *Pool) Create(workdir string, index int) (vmimpl.Instance, error) {
+	// 获取ssh key
 	sshkey := pool.env.SSHKey
 	sshuser := pool.env.SSHUser
 	if pool.env.Image == "9p" {
+		// 若是9p格式则会生成ssh key放到key文件中并生成init.sh
 		sshkey = filepath.Join(workdir, "key")
 		sshuser = "root"
 		if _, err := osutil.RunCmd(10*time.Minute, "", "ssh-keygen", "-t", "rsa", "-b", "2048",
@@ -344,11 +349,14 @@ func (pool *Pool) Create(workdir string, index int) (vmimpl.Instance, error) {
 		}
 	}
 
+	// 接下来就是调用ctor函数创建虚拟机
 	for i := 0; ; i++ {
 		inst, err := pool.ctor(workdir, sshkey, sshuser, index)
 		if err == nil {
+			// 如果打开了就返回该虚拟机
 			return inst, nil
 		}
+		// 如果打不开会尝试重启1000次
 		// Older qemu prints "could", newer -- "Could".
 		if i < 1000 && strings.Contains(err.Error(), "ould not set up host forwarding rule") {
 			continue
@@ -361,6 +369,7 @@ func (pool *Pool) Create(workdir string, index int) (vmimpl.Instance, error) {
 }
 
 func (pool *Pool) ctor(workdir, sshkey, sshuser string, index int) (*instance, error) {
+	// 先创建一个实例，主要是带着ssh key，channel和其他的配置文件
 	inst := &instance{
 		index:      index,
 		cfg:        pool.cfg,
@@ -378,6 +387,7 @@ func (pool *Pool) ctor(workdir, sshkey, sshuser string, index int) (*instance, e
 	if pool.env.Snapshot {
 		inst.snapshot = new(snapshot)
 	}
+	// 下面这个是go语言的特殊用法，if支持多个语句，上一个语句返回是true之后才会执行下一个语句
 	if st, err := os.Stat(inst.image); err == nil && st.Size() == 0 {
 		// Some kernels may not need an image, however caller may still
 		// want to pass us a fake empty image because the rest of syzkaller
@@ -385,18 +395,23 @@ func (pool *Pool) ctor(workdir, sshkey, sshuser string, index int) (*instance, e
 		inst.image = ""
 	}
 	closeInst := inst
+	// defer 关键字用于将后面的函数调用推迟到包含它的函数即将返回之前执行
+	// 后面定义了一个匿名函数
 	defer func() {
 		if closeInst != nil {
+			// 释放资源
 			closeInst.Close()
 		}
 	}()
 
+	// 初始化实例内部的管道
 	var err error
 	inst.rpipe, inst.wpipe, err = osutil.LongPipe()
 	if err != nil {
 		return nil, err
 	}
 
+	// 调用boot函数进行正式创建
 	if err := inst.boot(); err != nil {
 		return nil, err
 	}
@@ -429,6 +444,7 @@ func (inst *instance) Close() error {
 }
 
 func (inst *instance) boot() error {
+	// 进行各种参数判断，将QEMU启动之后，使用ssh连接上
 	inst.port = vmimpl.UnusedTCPPort()
 	inst.monport = vmimpl.UnusedTCPPort()
 	args, err := inst.buildQemuArgs()
@@ -478,7 +494,7 @@ func (inst *instance) boot() error {
 			return err
 		}
 	}
-
+	// ssh连接
 	if err := vmimpl.WaitForSSH(inst.debug, 10*time.Minute*inst.timeouts.Scale, "localhost",
 		inst.sshkey, inst.sshuser, inst.os, inst.port, inst.merger.Err, false); err != nil {
 		bootOutputStop <- true

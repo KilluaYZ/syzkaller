@@ -125,12 +125,13 @@ func (err InfraError) InfraError() (string, []byte) {
 }
 
 // Register registers a new VM type within the package.
+// 在正式启动之前通过该函数将不同类型的VM信息注册到Types表中
 func Register(typ string, desc Type) {
 	Types[typ] = desc
 }
 
 type Type struct {
-	Ctor ctorFunc
+	Ctor ctorFunc // 构造函数
 	// It's possible to create out-of-thin-air instances of this type.
 	// Out-of-thin-air instances are used by syz-ci for image testing, patch testing, bisection, etc.
 	Overcommit bool
@@ -146,7 +147,7 @@ var (
 	// Close to interrupt all pending operations in all VMs.
 	Shutdown   = make(chan struct{})
 	ErrTimeout = errors.New("timeout")
-
+	// Types表
 	Types = make(map[string]Type)
 )
 
